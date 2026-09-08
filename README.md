@@ -1,10 +1,8 @@
-# PySimbot — Assignment RC 1
+# PySimbot — Assignment RC 2
 
-This repository contains a rule-based collision-avoidance robot for the PySimbot simulator. The main implementation is [`Assignment_RC_1.py`](Assignment_RC_1.py).
+`RC_2.py` is an autonomous, rule-based controller for a PySimbot robot. Its objective is to reach the food while avoiding walls and obstacles. RC 2 improves the original controller by retaining a safe turn direction during obstacle avoidance, preventing side-collision movement, and continuing food tracking safely in corridors.
 
-The robot has one objective (food). It uses infrared distance sensors to avoid walls and obstacles, and uses the food direction to guide its movement when the path is open.
-
-## Running the simulation
+## Run the robot
 
 Install the required packages:
 
@@ -12,184 +10,121 @@ Install the required packages:
 python -m pip install -r requirements.txt
 ```
 
-Run the assignment:
+Start RC 2:
 
 ```bash
-python Assignment_RC_1.py
+python RC_2.py
 ```
 
-The application starts one autonomous robot and one food objective. Keyboard control is disabled, and the simulation continues running after the objective is collected.
+The setup is unchanged from RC 1: one autonomous robot, one food objective, keyboard control disabled, continuous simulation, and food relocation after collection.
 
-## Robot inputs
+## Algorithm flowchart
 
-The `update()` method reads four values on every simulation frame:
+![RC 2 robot control flowchart](rc_2_algorithm_flowchart.svg)
 
-```python
-ir0 = self.distance(0)  # front sensor
-ir1 = self.distance(1)  # front-right sensor
-ir7 = self.distance(7)  # front-left sensor
-angle_to_food = self.smell()  # signed angle from -180 to +180 degrees
-```
+## Inputs
 
-PySimbot provides eight distance sensors at 45-degree intervals. This algorithm uses the three sensors most relevant to forward movement:
+On every `update()` frame, the controller reads:
 
-- `IR 0`: directly in front of the robot.
-- `IR 1`: front-right side.
-- `IR 7`: front-left side.
+| Input | Meaning |
+| --- | --- |
+| `ir0 = self.distance(0)` | Distance directly in front of the robot |
+| `ir1 = self.distance(1)` | Front-right distance |
+| `ir7 = self.distance(7)` | Front-left distance |
+| `angle_to_food = self.smell()` | Signed food angle from `-180°` to `+180°` |
+| `self.stuck` | Set by PySimbot when a movement attempt cannot progress |
 
-`distance()` returns the distance to the nearest wall or obstacle along the sensor ray. The simulator's maximum sensor distance is 100 units. `smell()` returns the signed angle from the robot's heading to the food; the algorithm limits food-following turns to a small range so the robot does not make sharp turns while travelling through open space.
+The controller uses the same three sensors and the same movement and turn values as RC 1.
 
-![Sensor layout](sensor_diagram.png)
+## Constants
 
-## Control constants
-
-| Constant | Value | Meaning |
+| Constant | Value | Purpose |
 | --- | ---: | --- |
-| `SAFETY_DISTANCE` | `30` | Front obstacle warning distance |
-| `CLOSED_DISTANCE` | `5` | Side is considered too close |
-| `HIT_DISTANCE` | `0` | Front sensor is touching an obstacle |
-| `FORWARD_STEP` | `5` | Forward movement per frame |
-| `REVERSE_STEP` | `-2` | Reverse movement after getting stuck or hitting an obstacle |
+| `SAFETY_DISTANCE` | `30` | Front-obstacle warning distance |
+| `CLOSED_DISTANCE` | `5` | Critical side-obstacle distance |
+| `HIT_DISTANCE` | `0` | Front sensor is in contact with an obstacle |
+| `FORWARD_STEP` | `5` | Forward movement command |
+| `REVERSE_STEP` | `-2` | Recovery reverse command |
 | `FOOD_TURN_DEGREE` | `8°` | Maximum food-following turn |
-| `SIDE_TURN_DEGREE` | `8°` | Turn used for a close side obstacle |
-| `FRONT_TURN_DEGREE` | `18°` | Turn used for a front obstacle |
-| `STUCK_TURN_DEGREE` | `30°` | Turn used when the robot is stuck or has reached an obstacle |
+| `SIDE_TURN_DEGREE` | `8°` | Critical side-avoidance turn |
+| `FRONT_TURN_DEGREE` | `18°` | Front-obstacle avoidance turn |
+| `STUCK_TURN_DEGREE` | `30°` | Recovery turn after contact or being stuck |
 
-## Decision algorithm
+## Decision priority
 
-`CollisionAvoidanceRobot.update()` evaluates conditions in priority order. The first matching condition performs an action and returns, so a dangerous situation always takes priority over food tracking.
+The first matching rule acts and returns. This gives collision recovery and obstacle avoidance priority over food tracking.
 
-![Algorithm flowchart](algorithm_flowchart.png)
+### 1. Recovery: stuck or front contact
 
-### Priority 0: recover from being stuck or hitting an obstacle
-
-```python
-if self.stuck or ir0 <= HIT_DISTANCE:
-    self.turning_until_clear = True
-    self.turn(self.avoid_dir * STUCK_TURN_DEGREE)
-    self.move(REVERSE_STEP)
-    return
-```
-
-The robot turns by 30 degrees in its current avoidance direction and moves backward by two units. The `stuck` flag is set by PySimbot when a movement attempt cannot make progress.
-
-### Condition 4: avoid an obstacle in front
-
-If the front sensor detects an obstacle within 30 units, the robot turns without moving forward:
+Condition:
 
 ```python
-if ir0 <= SAFETY_DISTANCE:
-    self.turn(self.avoid_dir * FRONT_TURN_DEGREE)
-    return
+self.stuck or ir0 <= 0
 ```
 
-Before the turn, the robot selects `avoid_dir` using this preference:
+The robot chooses a safe direction using the two side distances, turns by `30°`, and reverses by `2` units. If the reverse movement fails twice in a row, it flips the avoidance direction to escape a corner or dead end.
 
-1. If the front-left side (`ir7`) is closed, use the opposite direction.
-2. Otherwise, if the front-right side (`ir1`) is closed, use the opposite direction.
-3. Otherwise, choose the side with more available space.
-4. If both sides are equally clear, use the sign of `angle_to_food` as a tie-breaker.
+### 2. Front obstacle avoidance
 
-The `turning_until_clear` flag keeps the selected avoidance direction stable while the robot is continuously dealing with a front obstacle. This reduces rapid left-right oscillation.
-
-### Condition 3: avoid a close side obstacle
-
-If either side is closer than five units, the robot turns eight degrees toward the more open side and does not move during that frame:
+Condition:
 
 ```python
-if ir1 < CLOSED_DISTANCE or ir7 < CLOSED_DISTANCE:
-    if ir1 < ir7:
-        self.avoid_dir = -1
-        self.turn(-SIDE_TURN_DEGREE)
-    else:
-        self.avoid_dir = 1
-        self.turn(SIDE_TURN_DEGREE)
-    return
+ir0 <= 30
 ```
 
-The positive and negative turn signs follow PySimbot's heading convention. The comparison between `ir1` and `ir7` determines which side has more clearance.
+The robot selects the side with more clearance, using the food direction only when both sides are equal. It locks that choice while the front remains blocked and turns by `18°` each frame. It does not move forward until the front is clear.
 
-### Condition 1: follow the food in open space
+### 3. Critical side avoidance
 
-When both side sensors report more than 30 units of clearance, the robot follows the food:
+Condition:
 
 ```python
-if ir1 > SAFETY_DISTANCE and ir7 > SAFETY_DISTANCE:
-    self.turning_until_clear = False
-    turn_deg = max(-8.0, min(8.0, angle_to_food))
-    self.turn(turn_deg)
-    self.move(FORWARD_STEP)
-    return
+ir1 < 5 or ir7 < 5
 ```
 
-The food angle is clamped to the range `-8°` to `+8°`. The robot makes a small correction toward the food and then moves forward by five units. Clearing `turning_until_clear` allows the next obstacle to select a new avoidance direction.
+The robot locks a turn away from the close side and turns by `8°`. It deliberately does not move forward in this state: a front-sensor reading taken before the turn cannot guarantee that the new heading is clear of the same corner.
 
-### Condition 2: move forward safely
+### 4. Open-space food tracking
 
-If the front is outside the safety zone and neither side is critically close, the robot simply moves forward:
+Condition:
 
 ```python
-self.turning_until_clear = False
-self.move(FORWARD_STEP)
+ir1 > 30 and ir7 > 30
 ```
 
-This is the default movement behavior when no stronger avoidance rule is active.
+Both sides have room. The robot clamps the food angle to `-8°` through `+8°`, turns toward the food, and moves forward by `5` units.
 
-## Overall pseudocode
+### 5. Corridor food tracking
 
-```text
-Every simulation frame:
-    Read front, front-right, and front-left distances
-    Read the signed angle to the food
+This is the remaining safe-travel state: the front is clear, neither side is critically close, but at least one side is within the `30`-unit safety distance.
 
-    If stuck or touching an obstacle:
-        Turn 30 degrees in the current avoidance direction
-        Reverse 2 units
+The robot still turns toward the food and moves forward by `5` units. Before it turns, it checks whether the food direction would turn it toward the tighter side. If so, it makes a smaller correction toward the open side instead, capped at `4°`. This keeps the robot progressing toward food without steering into a nearby wall.
 
-    Else if the front distance is at most 30:
-        Select the safer avoidance direction
-        Turn 18 degrees
+## Controller state
 
-    Else if either side distance is less than 5:
-        Turn 8 degrees toward the side with more clearance
+RC 2 uses small amounts of memory to reduce oscillation:
 
-    Else if both side distances are greater than 30:
-        Turn toward the food by at most 8 degrees
-        Move forward 5 units
+- `front_avoid_active` keeps the selected front-obstacle direction until the front becomes clear.
+- `side_avoid_active` keeps the side-avoidance direction until the close side becomes safe again.
+- `stuck_frames` counts consecutive failed recovery movements and flips direction after two failures.
 
-    Else:
-        Move forward 5 units
-```
+## Why RC 2 is safer and more direct
 
-## Simulator configuration
+| RC 1 behavior | RC 2 behavior |
+| --- | --- |
+| A prior side-avoidance state could affect a later front obstacle. | Front and side avoidance have separate state flags. |
+| A close side only caused a turn, but its direction could change every frame. | The turn direction is locked until the side is clear. |
+| Food tracking stopped in corridors with side distances from `5` to `30`. | Food tracking continues, but it will not turn toward the tighter side. |
+| Recovery could repeat in the same blocked direction. | The direction flips after two failed reverse movements. |
 
-The `PySimbotApp` at the bottom of `Assignment_RC_1.py` is configured as follows:
+## Files
 
-```python
-app = PySimbotApp(
-    robot_cls=CollisionAvoidanceRobot,
-    num_robots=1,
-    num_objectives=1,
-    enable_wasd_control=False,
-    simulation_forever=True,
-    food_move_after_eat=True,
-)
-```
-
-This means the robot is fully autonomous, the food moves to a new location after being collected, and the simulation does not stop after one collection.
-
-## Related files
-
-- [`Assignment_RC_1.py`](Assignment_RC_1.py) — robot controller and simulation entry point.
-- [`sensor_diagram.png`](sensor_diagram.png) — sensor positions and thresholds.
-- [`algorithm_flowchart.png`](algorithm_flowchart.png) — visual decision flow.
-- [`Assignment_RC_1_Algorithm_Summary.pdf`](Assignment_RC_1_Algorithm_Summary.pdf) — additional algorithm summary.
+- [`RC_2.py`](RC_2.py) — final RC 2 robot controller.
+- [`Assignment_RC_1.py`](Assignment_RC_1.py) — original RC 1 controller.
+- [`rc_2_algorithm_flowchart.svg`](rc_2_algorithm_flowchart.svg) — RC 2 decision flowchart.
+- [`sensor_diagram.png`](sensor_diagram.png) — sensor layout.
 - [`requirements.txt`](requirements.txt) — Python dependencies.
-
-## Original project
-
-PySimbot is a simple robot simulation framework. See the [project wiki](https://github.com/jetstreamc/PySimbot/wiki/) for general framework documentation.
 
 ## License
 
-This software is distributed under the GNU GPL license. See [`LICENSE`](LICENSE).
+This project is distributed under the GNU GPL license. See [`LICENSE`](LICENSE).
